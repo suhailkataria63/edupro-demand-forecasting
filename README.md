@@ -7,3 +7,8 @@ Time-aware predictive modeling to forecast next-month course demand (enrollments
 2) Install deps: `pip install -r requirements.txt`
 3) Run pipeline: `python -m src.train`
 4) Run app: `streamlit run app/streamlit_app.py`
+
+
+## Dataset Note
+Note: The provided dataset does not include a course-to-teacher mapping (Courses sheet has no TeacherID).
+Teacher-level features are excluded from modeling and listed as a future enhancement.
