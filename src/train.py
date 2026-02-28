@@ -13,7 +13,7 @@ def main():
     dataset = build_features(dataset)
 
     # Drop rows where lag features are missing (first few months per course)
-    dataset = dataset.dropna(subset=["Enrollment_lag1", "Revenue_lag1"])
+    dataset = dataset.dropna(subset=["Enrollment_lag1", "Revenue_lag1","Enrollment_roll3","Revenue_roll3"])
 
     print("Final dataset shape (with lags):", dataset.shape)
     print(dataset[[

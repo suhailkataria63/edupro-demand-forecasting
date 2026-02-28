@@ -20,8 +20,36 @@ def add_lag_features(df: pd.DataFrame, lags=(1, 2, 3)) -> pd.DataFrame:
     df["Revenue_per_enrollment_lag1"] = df["Revenue_lag1"] / df["Enrollment_lag1"].replace(0, pd.NA)
 
     return df
+def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df = df.sort_values(["CourseID", "YearMonth"])
+
+    df["Enrollment_roll3"] = (
+        df.groupby("CourseID")["Enrollment_count"]
+        .rolling(3)
+        .mean()
+        .reset_index(level=0, drop=True)
+    )
+
+    df["Revenue_roll3"] = (
+        df.groupby("CourseID")["Revenue"]
+        .rolling(3)
+        .mean()
+        .reset_index(level=0, drop=True)
+    )
+
+    return df
+
+
+def add_trend_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["Enrollment_trend"] = df["Enrollment_lag1"] - df["Enrollment_lag2"]
+    df["Revenue_trend"] = df["Revenue_lag1"] - df["Revenue_lag2"]
+    return df
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_time_features(df)
     df = add_lag_features(df)
+    df = add_rolling_features(df)
+    df = add_trend_features(df)
     return df
