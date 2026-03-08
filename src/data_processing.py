@@ -33,13 +33,27 @@ def create_targets(df):
         .reset_index()
         .rename(columns={"Enrollment_count": "Category_Enrollment"})
     )
+    cat_monthly = cat_monthly.sort_values(["CourseCategory", "YearMonth"])
+    cat_monthly["Category_Enrollment_next_month"] = (
+        cat_monthly.groupby("CourseCategory")["Category_Enrollment"].shift(-1)
+    )
     df = df.merge(cat_monthly, on=["CourseCategory", "YearMonth"], how="left")
 
-    # Category next month target
-    df = df.sort_values(["CourseCategory", "YearMonth", "CourseID"])
-    df["Category_Enrollment_next_month"] = (
-        df.groupby("CourseCategory")["Category_Enrollment"].shift(-1)
+    # ----- Category revenue per month -----
+    cat_revenue_monthly = (
+        df.groupby(["CourseCategory", "YearMonth"])["Revenue"]
+        .sum()
+        .reset_index()
+        .rename(columns={"Revenue": "Category_Revenue"})
     )
+    cat_revenue_monthly = cat_revenue_monthly.sort_values(["CourseCategory", "YearMonth"])
+    cat_revenue_monthly["Category_Revenue_next_month"] = (
+        cat_revenue_monthly.groupby("CourseCategory")["Category_Revenue"].shift(-1)
+    )
+    df = df.merge(cat_revenue_monthly, on=["CourseCategory", "YearMonth"], how="left")
+
+    # Drop current Category_Revenue as it's not needed for features (target is computed)
+    df = df.drop(columns=["Category_Revenue"])
 
     # ----- Course share (current month) -----
     df = df.sort_values(["CourseID", "YearMonth"])

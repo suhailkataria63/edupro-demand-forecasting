@@ -1,6 +1,6 @@
 Hierarchical Modeling Improvement Explanation
 
-After introducing category-level context features, enrollment forecasting MAPE improved significantly (~25% → ~9%).
+After introducing category-level context features, enrollment forecasting accuracy improved significantly (MAPE previously used metric).
 
 This improvement was investigated carefully to rule out data leakage.
 
