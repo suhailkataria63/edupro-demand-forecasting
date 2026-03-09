@@ -1,0 +1,937 @@
+import os
+import sys
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+# Ensure project root is importable when Streamlit executes from `app/`.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.data_loader import load_data
+from src.data_processing import create_targets, prepare_monthly_data
+from src.feature_engineering import build_features
+from src.model_utils import load_metadata, load_model
+
+st.set_page_config(page_title="EduPro Forecasting", layout="wide")
+
+DEFAULT_DATA_PATH = os.getenv("EDUPRO_DATA_PATH", "data/raw/EduPro Online Platform.xlsx")
+METADATA_FILE = "prediction_metadata.json"
+
+LEVEL_MAP = {"Beginner": 0, "Intermediate": 1, "Advanced": 2}
+
+
+def apply_design_system():
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Manrope:wght@400;600;700&display=swap');
+
+        :root {
+            --bg: #050506;
+            --bg-soft: #0a0b10;
+            --panel: #10131a;
+            --text: #edf1f8;
+            --muted: #9aa5b5;
+            --accent: #ff5a5f;
+            --border: rgba(255, 255, 255, 0.08);
+        }
+
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+            background:
+                radial-gradient(900px 420px at 100% -10%, rgba(255, 90, 95, 0.16), transparent 65%),
+                radial-gradient(700px 380px at -10% 0%, rgba(59, 130, 246, 0.12), transparent 65%),
+                var(--bg);
+            color: var(--text);
+        }
+
+        [data-testid="stHeader"] {
+            background: rgba(0, 0, 0, 0);
+        }
+
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #080a0f 0%, #0d1118 100%);
+            border-right: 1px solid var(--border);
+        }
+
+        [data-testid="stSidebar"] * {
+            color: var(--text);
+            font-family: "Manrope", sans-serif;
+        }
+
+        .block-container {
+            max-width: 1280px;
+            padding-top: 1.6rem;
+            padding-bottom: 2.5rem;
+        }
+
+        h1, h2, h3 {
+            font-family: "Space Grotesk", sans-serif;
+            letter-spacing: -0.02em;
+            color: var(--text);
+        }
+
+        p, li, label, span, div, input, button {
+            font-family: "Manrope", sans-serif;
+        }
+
+        .hero-wrap {
+            display: grid;
+            grid-template-columns: 1.3fr 1fr;
+            gap: 1rem;
+            background: linear-gradient(145deg, rgba(16, 19, 26, 0.92), rgba(13, 16, 23, 0.92));
+            border: 1px solid var(--border);
+            border-radius: 22px;
+            padding: 1.35rem 1.5rem;
+            margin-bottom: 1.1rem;
+            box-shadow: 0 22px 36px rgba(0, 0, 0, 0.26);
+        }
+
+        .hero-kicker {
+            display: inline-block;
+            font-size: 0.77rem;
+            text-transform: uppercase;
+            letter-spacing: 0.11em;
+            color: #ff8d91;
+            font-weight: 700;
+            margin-bottom: 0.28rem;
+        }
+
+        .hero-title {
+            margin: 0;
+            font-size: 2.15rem;
+            line-height: 1.05;
+        }
+
+        .hero-sub {
+            color: var(--muted);
+            margin: 0.55rem 0 0 0;
+            font-size: 0.95rem;
+            max-width: 92%;
+        }
+
+        .hero-statbox {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 0.85rem 0.95rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.2rem;
+        }
+
+        .hero-statbox .label {
+            color: var(--muted);
+            font-size: 0.78rem;
+        }
+
+        .hero-statbox .value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        [data-testid="stMetric"] {
+            background: linear-gradient(165deg, rgba(16, 19, 26, 0.92), rgba(14, 17, 24, 0.92));
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 0.65rem 0.85rem;
+        }
+
+        [data-testid="stMetricLabel"] {
+            color: var(--muted);
+        }
+
+        [data-testid="stMetricValue"] {
+            color: #f7fafc;
+            font-family: "Space Grotesk", sans-serif;
+            font-size: 1.35rem;
+        }
+
+        div[data-baseweb="select"] > div,
+        [data-testid="stNumberInput"] > div > div,
+        [data-testid="stDateInput"] > div > div,
+        [data-testid="stTextInput"] > div > div {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+        }
+
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.55rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.25rem;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            border-radius: 10px 10px 0 0;
+            background: transparent;
+            color: var(--muted);
+            height: 2.35rem;
+            padding-left: 0.95rem;
+            padding-right: 0.95rem;
+        }
+
+        .stTabs [aria-selected="true"] {
+            color: #ffffff;
+            border-bottom: 2px solid var(--accent);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        div.stButton > button {
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(120deg, #ff4d57 0%, #ff6666 100%);
+            color: #fff;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            box-shadow: 0 8px 22px rgba(255, 77, 87, 0.35);
+        }
+
+        div.stButton > button:hover {
+            filter: brightness(1.08);
+            transform: translateY(-1px);
+        }
+
+        [data-testid="stDataFrame"] {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        @media (max-width: 980px) {
+            .hero-wrap {
+                grid-template-columns: 1fr;
+            }
+            .hero-title {
+                font-size: 1.85rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _safe_float(value, default=0.0):
+    try:
+        numeric = float(value)
+        if not np.isfinite(numeric):
+            return float(default)
+        return numeric
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _clamp(value, min_value=None, max_value=None, default=0.0):
+    numeric = _safe_float(value, default=default)
+    if min_value is not None:
+        numeric = max(float(min_value), numeric)
+    if max_value is not None:
+        numeric = min(float(max_value), numeric)
+    return float(numeric)
+
+
+def _fallback_metadata(models: Dict[str, object]) -> dict:
+    return {
+        "category_map": {},
+        "blending": {
+            "enrollment_blend_alpha": 1.0,
+            "course_revenue_blend_alpha": 0.5,
+        },
+        "models": {
+            name: {
+                "feature_columns": list(getattr(model, "feature_names_in_", [])),
+                "target_transform": "log1p",
+            }
+            for name, model in models.items()
+        },
+    }
+
+
+@st.cache_resource
+def load_artifacts():
+    models = {
+        "enrollment": load_model("xgboost_enrollment_model.pkl"),
+        "course_revenue": load_model("xgboost_course_revenue_model.pkl"),
+        "category_revenue": load_model("xgboost_category_revenue_model.pkl"),
+    }
+
+    metadata_error = None
+    try:
+        metadata = load_metadata(METADATA_FILE)
+    except Exception as exc:
+        metadata = _fallback_metadata(models)
+        metadata_error = str(exc)
+
+    return models, metadata, metadata_error
+
+
+@st.cache_data
+def load_reference_data(data_path: str):
+    courses, teachers, transactions = load_data(data_path)
+    monthly = prepare_monthly_data(courses, teachers, transactions)
+    dataset = create_targets(monthly)
+    features = build_features(dataset).dropna().copy()
+
+    if features.empty:
+        raise ValueError("Feature dataset is empty after preprocessing. Train data cannot be used for inference.")
+
+    features = features.sort_values(["YearMonth", "CourseID"]).copy()
+    course_latest = features.groupby("CourseID", as_index=False).last()
+    category_latest = features.groupby("CourseCategory", as_index=False).last()
+    numeric_defaults = features.select_dtypes(include=[np.number]).median().to_dict()
+
+    categories = sorted(features["CourseCategory"].dropna().astype(str).unique().tolist())
+    course_ids = sorted(features["CourseID"].dropna().astype(str).unique().tolist())
+
+    return {
+        "dataset": features,
+        "course_latest": course_latest,
+        "category_latest": category_latest,
+        "numeric_defaults": numeric_defaults,
+        "categories": categories,
+        "course_ids": course_ids,
+    }
+
+
+def validate_artifact_contract(models: Dict[str, object], metadata: dict) -> List[str]:
+    errors = []
+    metadata_models = metadata.get("models", {})
+
+    for model_name in ["enrollment", "course_revenue", "category_revenue"]:
+        model = models.get(model_name)
+        if model is None:
+            errors.append(f"Missing model artifact: {model_name}")
+            continue
+
+        model_cols = list(getattr(model, "feature_names_in_", []))
+        meta_cols = metadata_models.get(model_name, {}).get("feature_columns", [])
+
+        if not model_cols:
+            errors.append(f"Model `{model_name}` does not expose `feature_names_in_`.")
+            continue
+
+        if meta_cols and list(meta_cols) != list(model_cols):
+            errors.append(
+                f"Feature contract mismatch for `{model_name}` between model artifact and metadata."
+            )
+
+    return errors
+
+
+def get_category_map(metadata: dict, categories: List[str]) -> Dict[str, int]:
+    raw_map = metadata.get("category_map", {})
+    cleaned = {}
+
+    for key, value in raw_map.items():
+        try:
+            cleaned[str(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+
+    if cleaned:
+        return cleaned
+
+    return {category: idx for idx, category in enumerate(sorted(categories))}
+
+
+def build_feature_row(inputs: dict, category_map: Dict[str, int]) -> pd.DataFrame:
+    target_period = inputs["target_period"]
+    target_ts = target_period.to_timestamp()
+
+    enrollment_count = _safe_float(inputs["enrollment_count"])
+    revenue = _safe_float(inputs["revenue"])
+    course_price = _safe_float(inputs["course_price"])
+    course_duration = _safe_float(inputs["course_duration"])
+    course_rating = _safe_float(inputs["course_rating"])
+    category_enrollment = _safe_float(inputs["category_enrollment"])
+
+    enrollment_lag1 = _safe_float(inputs["enrollment_lag1"])
+    enrollment_lag2 = _safe_float(inputs["enrollment_lag2"])
+    enrollment_lag3 = _safe_float(inputs["enrollment_lag3"])
+
+    revenue_lag1 = _safe_float(inputs["revenue_lag1"])
+    revenue_lag2 = _safe_float(inputs["revenue_lag2"])
+    revenue_lag3 = _safe_float(inputs["revenue_lag3"])
+
+    cat_enroll_lag1 = _safe_float(inputs["cat_enroll_lag1"])
+    cat_enroll_lag2 = _safe_float(inputs["cat_enroll_lag2"])
+
+    enroll_mean_3 = float(np.mean([enrollment_lag1, enrollment_lag2, enrollment_lag3]))
+    rev_mean_3 = float(np.mean([revenue_lag1, revenue_lag2, revenue_lag3]))
+
+    course_share = enrollment_count / category_enrollment if category_enrollment > 0 else 0.0
+    course_share_lag1 = enrollment_lag1 / cat_enroll_lag1 if cat_enroll_lag1 > 0 else 0.0
+
+    revenue_per_enroll_lag1 = revenue_lag1 / enrollment_lag1 if enrollment_lag1 > 0 else 0.0
+    rev_per_enroll_mean_3 = rev_mean_3 / enroll_mean_3 if enroll_mean_3 > 0 else 0.0
+
+    month = int(target_ts.month)
+
+    row = {
+        "Enrollment_count": enrollment_count,
+        "Revenue": revenue,
+        "CoursePrice": course_price,
+        "CourseDuration": course_duration,
+        "CourseRating": course_rating,
+        "Category_Enrollment": category_enrollment,
+        "Course_Share": course_share,
+        "Course_Share_lag1": course_share_lag1,
+        "course_level_enc": LEVEL_MAP.get(inputs["course_level"], -1),
+        "instr_experience_bucket": _safe_float(inputs["instr_experience_bucket"]),
+        "instr_rating_score": _safe_float(inputs["instr_rating_score"]),
+        "instr_expertise_match": _safe_float(inputs["instr_expertise_match"]),
+        "year": int(target_ts.year),
+        "month": month,
+        "quarter": int(target_ts.quarter),
+        "is_q_start": int(month in [1, 4, 7, 10]),
+        "Enrollment_lag1": enrollment_lag1,
+        "Revenue_lag1": revenue_lag1,
+        "Enrollment_lag2": enrollment_lag2,
+        "Revenue_lag2": revenue_lag2,
+        "Enrollment_lag3": enrollment_lag3,
+        "Revenue_lag3": revenue_lag3,
+        "Revenue_per_enrollment_lag1": revenue_per_enroll_lag1,
+        "Enroll_mean_3": enroll_mean_3,
+        "Rev_mean_3": rev_mean_3,
+        "RevperEnroll_mean_3": rev_per_enroll_mean_3,
+        "Enrollment_roll3": enroll_mean_3,
+        "Revenue_roll3": rev_mean_3,
+        "Enrollment_trend": enrollment_lag1 - enrollment_lag2,
+        "Revenue_trend": revenue_lag1 - revenue_lag2,
+        "cat_enroll_lag1": cat_enroll_lag1,
+        "cat_enroll_lag2": cat_enroll_lag2,
+        "CourseCategory_enc": float(category_map.get(inputs["course_category"], -1)),
+    }
+
+    return pd.DataFrame([row])
+
+
+def validate_inputs(inputs: dict) -> Tuple[List[str], List[str]]:
+    errors = []
+    warnings = []
+
+    non_negative_fields = [
+        "course_price",
+        "course_duration",
+        "course_rating",
+        "enrollment_count",
+        "revenue",
+        "enrollment_lag1",
+        "enrollment_lag2",
+        "enrollment_lag3",
+        "revenue_lag1",
+        "revenue_lag2",
+        "revenue_lag3",
+        "category_enrollment",
+        "cat_enroll_lag1",
+        "cat_enroll_lag2",
+        "instr_experience_bucket",
+        "instr_rating_score",
+        "instr_expertise_match",
+    ]
+
+    for field in non_negative_fields:
+        if _safe_float(inputs.get(field, 0.0), 0.0) < 0:
+            errors.append(f"`{field}` cannot be negative.")
+
+    if _safe_float(inputs["course_price"]) <= 0:
+        errors.append("`course_price` must be greater than 0.")
+
+    if not (0 <= _safe_float(inputs["course_rating"]) <= 5):
+        errors.append("`course_rating` must be in [0, 5].")
+    if not (0 <= _safe_float(inputs["instr_rating_score"]) <= 5):
+        errors.append("`instr_rating_score` must be in [0, 5].")
+    if not (0 <= _safe_float(inputs["instr_expertise_match"]) <= 1):
+        errors.append("`instr_expertise_match` must be in [0, 1].")
+
+    if _safe_float(inputs["category_enrollment"]) < _safe_float(inputs["enrollment_count"]):
+        warnings.append("Category enrollment is lower than course enrollment for the same month.")
+
+    if _safe_float(inputs["cat_enroll_lag1"]) < _safe_float(inputs["enrollment_lag1"]):
+        warnings.append("Category lag1 enrollment is lower than course lag1 enrollment.")
+
+    expected_revenue = _safe_float(inputs["enrollment_count"]) * _safe_float(inputs["course_price"])
+    if expected_revenue > 0:
+        observed_revenue = _safe_float(inputs["revenue"])
+        relative_error = abs(observed_revenue - expected_revenue) / expected_revenue
+        if relative_error > 0.5:
+            warnings.append(
+                "Current revenue differs significantly from enrollments x course price. Verify input units."
+            )
+
+    return errors, warnings
+
+
+def predict_all(models: Dict[str, object], metadata: dict, feature_row: pd.DataFrame, inputs: dict):
+    metadata_models = metadata.get("models", {})
+
+    def _model_cols(model_name: str):
+        cols = metadata_models.get(model_name, {}).get("feature_columns", [])
+        if cols:
+            return list(cols)
+        return list(getattr(models[model_name], "feature_names_in_", []))
+
+    enrollment_cols = _model_cols("enrollment")
+    course_revenue_cols = _model_cols("course_revenue")
+    category_revenue_cols = _model_cols("category_revenue")
+
+    X_enroll = feature_row.reindex(columns=enrollment_cols, fill_value=0.0)
+    X_course_rev = feature_row.reindex(columns=course_revenue_cols, fill_value=0.0)
+    X_cat_rev = feature_row.reindex(columns=category_revenue_cols, fill_value=0.0)
+
+    pred_enrollment_direct = float(np.expm1(models["enrollment"].predict(X_enroll)[0]))
+    pred_course_revenue_direct = float(np.expm1(models["course_revenue"].predict(X_course_rev)[0]))
+    pred_category_revenue = float(np.expm1(models["category_revenue"].predict(X_cat_rev)[0]))
+
+    blending = metadata.get("blending", {})
+    enrollment_blend_alpha = float(blending.get("enrollment_blend_alpha", 1.0))
+    course_revenue_blend_alpha = float(blending.get("course_revenue_blend_alpha", 0.5))
+
+    enrollment_lag1 = _safe_float(inputs["enrollment_lag1"])
+    course_price = _safe_float(inputs["course_price"])
+
+    pred_enrollment = enrollment_blend_alpha * pred_enrollment_direct + (1 - enrollment_blend_alpha) * enrollment_lag1
+    pred_enrollment = float(max(0.0, pred_enrollment))
+
+    pred_course_revenue_structural = pred_enrollment * course_price
+    pred_course_revenue = (
+        course_revenue_blend_alpha * pred_course_revenue_direct
+        + (1 - course_revenue_blend_alpha) * pred_course_revenue_structural
+    )
+    pred_course_revenue = float(max(0.0, pred_course_revenue))
+    pred_category_revenue = float(max(0.0, pred_category_revenue))
+
+    return {
+        "pred_enrollment": pred_enrollment,
+        "pred_enrollment_direct": float(max(0.0, pred_enrollment_direct)),
+        "pred_course_revenue": pred_course_revenue,
+        "pred_course_revenue_direct": float(max(0.0, pred_course_revenue_direct)),
+        "pred_course_revenue_structural": float(max(0.0, pred_course_revenue_structural)),
+        "pred_category_revenue": pred_category_revenue,
+        "enrollment_blend_alpha": enrollment_blend_alpha,
+        "course_revenue_blend_alpha": course_revenue_blend_alpha,
+    }
+
+
+def resolve_index(options: List[str], value: str) -> int:
+    if value in options:
+        return options.index(value)
+    return 0
+
+
+def get_feature_importance_df(model, feature_columns: List[str]) -> pd.DataFrame:
+    importances = getattr(model, "feature_importances_", None)
+    if importances is None:
+        return pd.DataFrame(columns=["feature", "importance"])
+    df = pd.DataFrame(
+        {"feature": feature_columns, "importance": np.array(importances, dtype=float)}
+    ).sort_values("importance", ascending=False)
+    return df
+
+
+def main():
+    apply_design_system()
+
+    try:
+        models, metadata, metadata_error = load_artifacts()
+    except Exception as exc:
+        st.error(f"Failed to load model artifacts: {exc}")
+        st.stop()
+
+    try:
+        ref = load_reference_data(DEFAULT_DATA_PATH)
+    except Exception as exc:
+        st.error(f"Failed to load reference dataset from `{DEFAULT_DATA_PATH}`: {exc}")
+        st.stop()
+
+    contract_errors = validate_artifact_contract(models, metadata)
+    if contract_errors:
+        for err in contract_errors:
+            st.error(err)
+        st.stop()
+
+    if metadata_error:
+        st.warning(
+            "Model metadata file was not found or unreadable. "
+            "Using fallback metadata inferred from model files."
+        )
+
+    category_map = get_category_map(metadata, ref["categories"])
+
+    st.markdown(
+        f"""
+        <div class="hero-wrap">
+            <div>
+                <span class="hero-kicker">EduPro Forecasting Suite</span>
+                <h1 class="hero-title">Demand & Revenue Command Center</h1>
+                <p class="hero-sub">
+                    Production dashboard for enrollment prediction, course revenue projection,
+                    and category performance comparison.
+                </p>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.65rem;">
+                <div class="hero-statbox">
+                    <span class="label">Models Loaded</span>
+                    <span class="value">3</span>
+                </div>
+                <div class="hero-statbox">
+                    <span class="label">Known Courses</span>
+                    <span class="value">{len(ref['course_ids'])}</span>
+                </div>
+                <div class="hero-statbox">
+                    <span class="label">Known Categories</span>
+                    <span class="value">{len(ref['categories'])}</span>
+                </div>
+                <div class="hero-statbox">
+                    <span class="label">Data Source</span>
+                    <span class="value" style="font-size:0.9rem;">{Path(DEFAULT_DATA_PATH).name}</span>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.sidebar:
+        st.subheader("Runtime")
+        st.write(f"Data path: `{DEFAULT_DATA_PATH}`")
+        st.write("Models loaded: enrollment, course revenue, category revenue")
+        st.write(f"Known categories: {len(ref['categories'])}")
+        st.write(f"Known courses: {len(ref['course_ids'])}")
+
+    course_latest_df = ref["course_latest"].copy()
+    category_latest_df = ref["category_latest"].copy()
+
+    course_profiles = {str(row["CourseID"]): row for _, row in course_latest_df.iterrows()}
+    category_profiles = {str(row["CourseCategory"]): row for _, row in category_latest_df.iterrows()}
+
+    st.markdown("### 1) Course Profile")
+    source_mode = st.radio("Course source", ["Existing course", "New course"], horizontal=True)
+
+    if source_mode == "Existing course":
+        course_id = st.selectbox("Course ID", ref["course_ids"])
+        course_profile = course_profiles.get(course_id)
+
+        default_category = str(course_profile["CourseCategory"])
+        default_price = _safe_float(course_profile.get("CoursePrice"), ref["numeric_defaults"].get("CoursePrice", 100.0))
+        default_duration = _safe_float(
+            course_profile.get("CourseDuration"), ref["numeric_defaults"].get("CourseDuration", 10.0)
+        )
+        default_rating = _safe_float(course_profile.get("CourseRating"), ref["numeric_defaults"].get("CourseRating", 4.0))
+        default_level = str(course_profile.get("CourseLevel", "Intermediate"))
+    else:
+        course_id = st.text_input("Course ID", value="NEW_COURSE")
+        default_category = ref["categories"][0]
+        default_price = _safe_float(ref["numeric_defaults"].get("CoursePrice"), 100.0)
+        default_duration = _safe_float(ref["numeric_defaults"].get("CourseDuration"), 10.0)
+        default_rating = _safe_float(ref["numeric_defaults"].get("CourseRating"), 4.0)
+        default_level = "Intermediate"
+
+    default_price = _clamp(default_price, min_value=0.01, default=100.0)
+    default_duration = _clamp(default_duration, min_value=0.1, default=10.0)
+    default_rating = _clamp(default_rating, min_value=0.0, max_value=5.0, default=4.0)
+
+    categories = ref["categories"]
+    course_category = st.selectbox("Course Category", categories, index=resolve_index(categories, default_category))
+    course_level = st.selectbox("Course Level", list(LEVEL_MAP.keys()), index=resolve_index(list(LEVEL_MAP.keys()), default_level))
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        course_price = st.number_input("Course Price", min_value=0.01, value=float(default_price), step=1.0)
+    with col_b:
+        course_duration = st.number_input("Course Duration (hours)", min_value=0.1, value=float(default_duration), step=0.5)
+    with col_c:
+        course_rating = st.number_input("Course Rating", min_value=0.0, max_value=5.0, value=float(default_rating), step=0.1)
+
+    col_d, col_e, col_f = st.columns(3)
+    with col_d:
+        instr_experience_bucket = st.number_input(
+            "Instructor Experience Bucket (0-5)",
+            min_value=0.0,
+            max_value=5.0,
+            value=_clamp(ref["numeric_defaults"].get("instr_experience_bucket", 2.0), min_value=0.0, max_value=5.0, default=2.0),
+            step=1.0,
+        )
+    with col_e:
+        instr_rating_score = st.number_input(
+            "Instructor Rating (0-5)",
+            min_value=0.0,
+            max_value=5.0,
+            value=_clamp(ref["numeric_defaults"].get("instr_rating_score", 4.0), min_value=0.0, max_value=5.0, default=4.0),
+            step=0.1,
+        )
+    with col_f:
+        instr_expertise_match = st.number_input(
+            "Instructor Expertise Match (0-1)",
+            min_value=0.0,
+            max_value=1.0,
+            value=_clamp(ref["numeric_defaults"].get("instr_expertise_match", 0.8), min_value=0.0, max_value=1.0, default=0.8),
+            step=0.05,
+        )
+
+    st.markdown("### 2) Historical Signals")
+    category_profile = category_profiles.get(course_category)
+    course_profile = course_profiles.get(course_id)
+
+    default_enrollment = _safe_float(
+        (course_profile.get("Enrollment_count") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Enrollment_count", 10.0),
+    )
+    default_revenue = _safe_float(
+        (course_profile.get("Revenue") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Revenue", default_enrollment * course_price),
+    )
+
+    default_enrollment_lag1 = _safe_float(
+        (course_profile.get("Enrollment_lag1") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Enrollment_lag1", default_enrollment),
+    )
+    default_enrollment_lag2 = _safe_float(
+        (course_profile.get("Enrollment_lag2") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Enrollment_lag2", default_enrollment_lag1),
+    )
+    default_enrollment_lag3 = _safe_float(
+        (course_profile.get("Enrollment_lag3") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Enrollment_lag3", default_enrollment_lag2),
+    )
+
+    default_revenue_lag1 = _safe_float(
+        (course_profile.get("Revenue_lag1") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Revenue_lag1", default_revenue),
+    )
+    default_revenue_lag2 = _safe_float(
+        (course_profile.get("Revenue_lag2") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Revenue_lag2", default_revenue_lag1),
+    )
+    default_revenue_lag3 = _safe_float(
+        (course_profile.get("Revenue_lag3") if course_profile is not None else None),
+        ref["numeric_defaults"].get("Revenue_lag3", default_revenue_lag2),
+    )
+
+    default_category_enrollment = _safe_float(
+        (category_profile.get("Category_Enrollment") if category_profile is not None else None),
+        ref["numeric_defaults"].get("Category_Enrollment", max(default_enrollment, 100.0)),
+    )
+    default_cat_lag1 = _safe_float(
+        (category_profile.get("cat_enroll_lag1") if category_profile is not None else None),
+        ref["numeric_defaults"].get("cat_enroll_lag1", default_category_enrollment),
+    )
+    default_cat_lag2 = _safe_float(
+        (category_profile.get("cat_enroll_lag2") if category_profile is not None else None),
+        ref["numeric_defaults"].get("cat_enroll_lag2", default_cat_lag1),
+    )
+
+    default_target_month = (pd.Timestamp.today() + pd.offsets.MonthBegin(1)).date()
+    target_date = st.date_input("Forecast Month (any date within month)", value=default_target_month)
+    target_period = pd.Period(pd.Timestamp(target_date), freq="M")
+
+    col_1, col_2 = st.columns(2)
+    with col_1:
+        enrollment_count = st.number_input("Current Month Enrollments", min_value=0.0, value=_clamp(default_enrollment, min_value=0.0, default=10.0), step=1.0)
+        enrollment_lag1 = st.number_input("Enrollments 1 Month Ago", min_value=0.0, value=_clamp(default_enrollment_lag1, min_value=0.0, default=10.0), step=1.0)
+        enrollment_lag2 = st.number_input("Enrollments 2 Months Ago", min_value=0.0, value=_clamp(default_enrollment_lag2, min_value=0.0, default=10.0), step=1.0)
+        enrollment_lag3 = st.number_input("Enrollments 3 Months Ago", min_value=0.0, value=_clamp(default_enrollment_lag3, min_value=0.0, default=10.0), step=1.0)
+
+    with col_2:
+        revenue = st.number_input("Current Month Revenue", min_value=0.0, value=_clamp(default_revenue, min_value=0.0, default=1000.0), step=10.0)
+        revenue_lag1 = st.number_input("Revenue 1 Month Ago", min_value=0.0, value=_clamp(default_revenue_lag1, min_value=0.0, default=1000.0), step=10.0)
+        revenue_lag2 = st.number_input("Revenue 2 Months Ago", min_value=0.0, value=_clamp(default_revenue_lag2, min_value=0.0, default=1000.0), step=10.0)
+        revenue_lag3 = st.number_input("Revenue 3 Months Ago", min_value=0.0, value=_clamp(default_revenue_lag3, min_value=0.0, default=1000.0), step=10.0)
+
+    col_3, col_4 = st.columns(2)
+    with col_3:
+        category_enrollment = st.number_input(
+            "Category Total Enrollments (Current Month)",
+            min_value=0.0,
+            value=_clamp(default_category_enrollment, min_value=0.0, default=100.0),
+            step=1.0,
+        )
+    with col_4:
+        cat_enroll_lag1 = st.number_input("Category Enrollments 1 Month Ago", min_value=0.0, value=_clamp(default_cat_lag1, min_value=0.0, default=100.0), step=1.0)
+        cat_enroll_lag2 = st.number_input("Category Enrollments 2 Months Ago", min_value=0.0, value=_clamp(default_cat_lag2, min_value=0.0, default=100.0), step=1.0)
+
+    inputs = {
+        "course_id": course_id,
+        "course_category": course_category,
+        "course_level": course_level,
+        "course_price": course_price,
+        "course_duration": course_duration,
+        "course_rating": course_rating,
+        "instr_experience_bucket": instr_experience_bucket,
+        "instr_rating_score": instr_rating_score,
+        "instr_expertise_match": instr_expertise_match,
+        "target_period": target_period,
+        "enrollment_count": enrollment_count,
+        "revenue": revenue,
+        "enrollment_lag1": enrollment_lag1,
+        "enrollment_lag2": enrollment_lag2,
+        "enrollment_lag3": enrollment_lag3,
+        "revenue_lag1": revenue_lag1,
+        "revenue_lag2": revenue_lag2,
+        "revenue_lag3": revenue_lag3,
+        "category_enrollment": category_enrollment,
+        "cat_enroll_lag1": cat_enroll_lag1,
+        "cat_enroll_lag2": cat_enroll_lag2,
+    }
+
+    if st.button("Generate Forecast", type="primary"):
+        errors, warnings = validate_inputs(inputs)
+        if errors:
+            st.session_state.pop("forecast_payload", None)
+            for err in errors:
+                st.error(err)
+            st.stop()
+
+        if course_category not in category_map:
+            warnings.append(
+                "Selected category is missing in model category map. Encoding as -1 may reduce prediction quality."
+            )
+
+        try:
+            feature_row = build_feature_row(inputs, category_map)
+            predictions = predict_all(models, metadata, feature_row, inputs)
+        except Exception as exc:
+            st.session_state.pop("forecast_payload", None)
+            st.error(f"Prediction failed: {exc}")
+            st.stop()
+
+        st.session_state["forecast_payload"] = {
+            "predictions": predictions,
+            "feature_row": feature_row.to_dict(orient="records"),
+            "course_category": course_category,
+            "category_enrollment": float(_safe_float(category_enrollment, 0.0)),
+            "warnings": warnings,
+        }
+
+    forecast_payload = st.session_state.get("forecast_payload")
+    if forecast_payload:
+        predictions = forecast_payload["predictions"]
+        feature_row = pd.DataFrame(forecast_payload["feature_row"])
+        result_course_category = forecast_payload["course_category"]
+        result_category_enrollment = float(_safe_float(forecast_payload["category_enrollment"], 0.0))
+
+        for warn in forecast_payload.get("warnings", []):
+            st.warning(warn)
+
+        st.markdown("### 3) Forecast Results")
+        tab1, tab2, tab3, tab4 = st.tabs(
+            [
+                "Course Demand Dashboard",
+                "Revenue Forecast Visualizations",
+                "Feature Importance Explorer",
+                "Category-Level Demand Comparison",
+            ]
+        )
+
+        with tab1:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Next-Month Enrollments", f"{predictions['pred_enrollment']:.2f}")
+            m2.metric("Next-Month Course Revenue", f"${predictions['pred_course_revenue']:.2f}")
+            m3.metric("Next-Month Category Revenue", f"${predictions['pred_category_revenue']:.2f}")
+            st.caption(
+                "Demand forecast uses blended enrollment prediction from direct model and lag baseline."
+            )
+
+        with tab2:
+            revenue_chart_df = pd.DataFrame(
+                {
+                    "Metric": [
+                        "Direct Revenue Model",
+                        "Structural Revenue (Enrollment x Price)",
+                        "Final Blended Revenue",
+                    ],
+                    "Value": [
+                        predictions["pred_course_revenue_direct"],
+                        predictions["pred_course_revenue_structural"],
+                        predictions["pred_course_revenue"],
+                    ],
+                }
+            )
+            st.bar_chart(revenue_chart_df.set_index("Metric"))
+            st.caption(
+                f"Revenue blend alpha: {predictions['course_revenue_blend_alpha']:.2f}"
+            )
+
+        with tab3:
+            model_label_map = {
+                "Enrollment Model": "enrollment",
+                "Course Revenue Model": "course_revenue",
+                "Category Revenue Model": "category_revenue",
+            }
+            selected_label = st.selectbox(
+                "Model",
+                list(model_label_map.keys()),
+                index=0,
+                key="feature_importance_model_select",
+            )
+            selected_model_key = model_label_map[selected_label]
+            selected_model = models[selected_model_key]
+            selected_features = metadata.get("models", {}).get(selected_model_key, {}).get(
+                "feature_columns",
+                list(getattr(selected_model, "feature_names_in_", [])),
+            )
+            importance_df = get_feature_importance_df(selected_model, selected_features)
+
+            if importance_df.empty:
+                st.info("Feature importance is unavailable for the selected model.")
+            else:
+                top_n = st.slider("Top features", min_value=5, max_value=30, value=15, step=1)
+                st.bar_chart(importance_df.head(top_n).set_index("feature"))
+                st.dataframe(importance_df.head(top_n), use_container_width=True)
+
+        with tab4:
+            category_slice = ref["dataset"][ref["dataset"]["CourseCategory"] == result_course_category]
+            median_course_demand = _safe_float(category_slice["Enrollment_count"].median(), 0.0)
+            predicted_share_pct = (
+                100 * predictions["pred_enrollment"] / max(_safe_float(result_category_enrollment, 0.0), 1.0)
+            )
+
+            category_comp_df = pd.DataFrame(
+                {
+                    "Metric": [
+                        "Predicted Course Enrollment",
+                        "Category Current Enrollment",
+                        "Category Median Course Enrollment",
+                    ],
+                    "Value": [
+                        predictions["pred_enrollment"],
+                        _safe_float(result_category_enrollment, 0.0),
+                        median_course_demand,
+                    ],
+                }
+            )
+            st.bar_chart(category_comp_df.set_index("Metric"))
+            st.metric("Predicted Course Share of Category", f"{predicted_share_pct:.2f}%")
+            st.caption(
+                "Category comparison uses current category total input and historical category median from reference data."
+            )
+
+        with st.expander("Prediction Details"):
+            st.write(
+                {
+                    "enrollment_direct_model": round(predictions["pred_enrollment_direct"], 4),
+                    "enrollment_blend_alpha": predictions["enrollment_blend_alpha"],
+                    "enrollment_final": round(predictions["pred_enrollment"], 4),
+                    "course_revenue_direct_model": round(predictions["pred_course_revenue_direct"], 4),
+                    "course_revenue_structural": round(predictions["pred_course_revenue_structural"], 4),
+                    "course_revenue_blend_alpha": predictions["course_revenue_blend_alpha"],
+                    "course_revenue_final": round(predictions["pred_course_revenue"], 4),
+                    "category_revenue_predicted": round(predictions["pred_category_revenue"], 4),
+                }
+            )
+            st.write("Feature row used for inference")
+            st.dataframe(feature_row, use_container_width=True)
+    else:
+        st.info("Set inputs and click `Generate Forecast` to view dashboard results.")
+
+
+if __name__ == "__main__":
+    main()

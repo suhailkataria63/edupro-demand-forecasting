@@ -6,6 +6,7 @@ seaborn
 xgboost
 lightgbm
 streamlit
+plotly
 shap
 openpyxl
 joblib
